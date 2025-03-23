@@ -103,7 +103,7 @@ def process_input_excel_column(directory):
     
     return all_excel_data
 
-def process_excel(input_directory, data_directory):
+def process_excel(input_directory, data_directory, output_directory):
     """
     处理Excel文件并调用API，将结果写回Excel文件
     
@@ -126,60 +126,68 @@ def process_excel(input_directory, data_directory):
         for input_file, sheets in input_data.items():
             print(f"处理文件: {input_file}")
             
-            # 遍历每个工作表
-            for sheet_name, df in sheets.items():
-                print(f"处理工作表: {sheet_name}")
-                
-                # 遍历每一行
-                for index, row in df.iterrows():
-                    # 获取A列的值作为prompt
-                    prompt = str(row.iloc[0])
-                    if pd.isna(prompt) or prompt.strip() == "":
-                        continue
+            # 创建新的输出文件，文件名为sheet_name+input_file
+            output_file_name = f"{sheet_name}_{input_file}"
+            output_file_path = os.path.join(output_directory, output_file_name)
+            
+            # 创建一个ExcelWriter用于写入新文件
+            with pd.ExcelWriter(output_file_path, engine='openpyxl') as writer:
+                # 遍历每个工作表
+                for input_sheet_name, df in sheets.items():
+                    print(f"处理工作表: {input_sheet_name}")
                     
-                    # 调用API
-                    api_result = call_qwen_api(prompt, tech_keywords)
+                    # 创建DataFrame的副本，以免修改原始数据
+                    output_df = df.copy()
                     
-                    try:
-                        # 解析JSON结果
-                        # result_json = json.loads(api_result)
-                        result_json = extract_json_with_regex(api_result)
-                        contains_keywords = result_json.get("contains_keywords", False)
-                        reasoning = result_json.get("reasoning", "未提供解释")
-                        matched_keywords = result_json.get("matched_keywords", [])
+                    # 确保有结果列
+                    if output_df.shape[1] > 1:
+                        output_df.columns.values[1] = "API结果" if output_df.shape[1] > 1 else None
+                    else:
+                        output_df.insert(1, "API结果", "")
+                    
+                    # 遍历每一行
+                    for index, row in output_df.iterrows():
+                        # 获取A列的值作为prompt
+                        prompt = str(row.iloc[0])
+                        if pd.isna(prompt) or prompt.strip() == "":
+                            continue
                         
-                        # 拼接结果
-                        if contains_keywords:
-                            result_text = f"包含关键词: {', '.join(matched_keywords)}。{reasoning}"
-                        else:
-                            result_text = f"不包含关键词。{reasoning}"
+                        # 调用API
+                        api_result = call_qwen_api(prompt, tech_keywords)
                         
-                        # 写入B列
-                        if df.shape[1] > 1:
-                            df.iloc[index, 1] = result_text
-                        else:
-                            # 如果B列不存在，则添加B列
-                            df.insert(1, "API结果", "")
-                            df.iloc[index, 1] = result_text
+                        try:
+                            # 解析JSON结果
+                            result_json = extract_json_with_regex(api_result)
+                            contains_keywords = result_json.get("contains_keywords", False)
+                            reasoning = result_json.get("reasoning", "未提供解释")
+                            matched_keywords = result_json.get("matched_keywords", [])
+                            
+                            # 拼接结果
+                            if contains_keywords:
+                                result_text = f"包含关键词: {', '.join(matched_keywords)}。{reasoning}"
+                            else:
+                                result_text = f"不包含关键词。{reasoning}"
+                            
+                            # 写入B列
+                            output_df.iloc[index, 1] = result_text
+                        
+                        except json.JSONDecodeError:
+                            print(f"解析JSON失败: {api_result}")
+                            output_df.iloc[index, 1] = "API返回结果解析错误"
+                        
+                        except Exception as e:
+                            print(f"处理行 {index} 时出错: {str(e)}")
+                            output_df.iloc[index, 1] = f"处理错误: {str(e)}"
                     
-                    except json.JSONDecodeError:
-                        print(f"解析JSON失败: {api_result}")
-                        df.iloc[index, 1] = "API返回结果解析错误"
-                    
-                    except Exception as e:
-                        print(f"处理行 {index} 时出错: {str(e)}")
-                        df.iloc[index, 1] = f"处理错误: {str(e)}"
+                    # 将处理后的DataFrame写入新Excel文件
+                    output_df.to_excel(writer, sheet_name=input_sheet_name, index=False)
                 
-                # 将更新后的DataFrame写回Excel文件
-                excel_path = os.path.join(input_directory, input_file)
-                with pd.ExcelWriter(excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
-                
-                print(f"工作表 {sheet_name} 处理完成")
+                print(f"文件 {output_file_name} 处理完成")
 
 
 # 示例使用
 if __name__ == "__main__":
-    input_directory = "input"  # 替换为实际的目录路径
-    data_directory = "data"  # 替换为实际的目录路径
-    process_excel(input_directory, data_directory)
+    input_directory = "test_input"  
+    data_directory = "data"  
+    output_directory= "output" 
+    process_excel(input_directory, data_directory, output_directory)
